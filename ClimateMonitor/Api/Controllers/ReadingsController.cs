@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using ClimateMonitor.Services;
 using ClimateMonitor.Services.Models;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Http;
 
 namespace ClimateMonitor.Api.Controllers;
 
@@ -9,14 +11,17 @@ namespace ClimateMonitor.Api.Controllers;
 public class ReadingsController : ControllerBase
 {
     private readonly DeviceSecretValidatorService _secretValidator;
+    private readonly FirmewareValidatorService _firmwareValidator;
     private readonly AlertService _alertService;
 
     public ReadingsController(
         DeviceSecretValidatorService secretValidator, 
-        AlertService alertService)
+        AlertService alertService,
+        FirmewareValidatorService firmwareValidator)
     {
         _secretValidator = secretValidator;
         _alertService = alertService;
+        _firmwareValidator = firmwareValidator;
     }
 
     /// <summary>
@@ -34,14 +39,30 @@ public class ReadingsController : ControllerBase
     /// <param name="deviceReadingRequest">Sensor information and extra metadata from device.</param>
     [HttpPost("evaluate")]
     public ActionResult<IEnumerable<Alert>> EvaluateReading(
-        string deviceSecret,
         [FromBody] DeviceReadingRequest deviceReadingRequest)
     {
+
+        string deviceSecret = HttpContext.Request.Headers["x-device-shared-secret"];
         if (!_secretValidator.ValidateDeviceSecret(deviceSecret))
         {
             return Problem(
                 detail: "Device secret is not within the valid range.",
                 statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!_firmwareValidator.ValidateFirmware(deviceReadingRequest.FirmwareVersion))
+        {
+            return ValidationProblem(
+            new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                { "FirmwareVersion", new[] { "The firmware value does not match semantic versioning format." } }
+            })
+            {
+                Instance = "FirmwareVersion",
+                Title = "FirmwareVersion",
+                Type = "FirmwareVersion",
+                Detail = "The firmware value does not match semantic versioning format."
+            });
         }
 
         return Ok(_alertService.GetAlerts(deviceReadingRequest));
